@@ -33,13 +33,16 @@ pub fn derive(input: TokenStream) -> TokenStream {
     });
 
     let field_idents = fields.clone().map(|f| f.ident.unwrap());
+    let field_idents2 = field_idents.clone();
+    let field_idents3 = field_idents.clone();
 
     let functions = fields.map(|field| {
         let ty = field.ty;
         let ident = field.ident;
         quote!(
-            pub fn #ident(&mut self, #ident: #ty) {
+            pub fn #ident(&mut self, #ident: #ty) -> &mut Self {
                 self.#ident = Some(#ident);
+                self
             }
         )
     });
@@ -59,6 +62,16 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
         impl #builder_ident {
             #(#functions)*
+
+            pub fn build(&mut self) -> std::result::Result<#ident, std::boxed::Box<dyn std::error::Error>> {
+                #(if self.#field_idents2.is_none(){
+                    return std::result::Result::Err(format!("Missing value for {}", stringify!(#field_idents2)).into());
+                })*
+
+                std::result::Result::Ok(#ident {
+                    #(#field_idents3: self.#field_idents3.clone().unwrap()),*
+                })
+            }
         }
     );
 
