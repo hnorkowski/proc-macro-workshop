@@ -9,7 +9,7 @@ use syn::{
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
 
-    let struct_ident = ast.ident.clone();
+    let struct_ident = &ast.ident;
     let builder_ident = format_ident!("{}Builder", struct_ident);
 
     let fields = get_fields(&ast);
@@ -32,8 +32,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let field_idents = get_field_idents(&fields);
 
     let required_field_idents = get_field_idents(&required_fields);
-    let required_field_idents2 = required_field_idents.clone();
-
     let extend_field_idents = get_field_idents(&extend_fields);
     let optional_field_idents = get_field_idents(&optional_fields);
 
@@ -75,7 +73,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 })*
 
                 std::result::Result::Ok(#struct_ident {
-                    #(#required_field_idents2: self.#required_field_idents2.clone().unwrap()),*,
+                    #(#required_field_idents: self.#required_field_idents.clone().unwrap()),*,
+                    #(#extend_field_idents: self.#extend_field_idents.clone().unwrap_or(Vec::new())),*,
                     #(#optional_field_idents: self.#optional_field_idents.clone().unwrap_or(None)),*
                 })
             }
@@ -225,8 +224,9 @@ fn generate_extend_functions(fields: &[Field]) -> Vec<quote::__private::TokenStr
                 .clone()
                 .into_iter()
                 .find_map(|token| {
-                    if let proc_macro2::TokenTree::Ident(ident) = token {
-                        Some(ident)
+                    if let proc_macro2::TokenTree::Literal(literal) = token {
+                        let ident = literal.to_string().trim_matches('\"').to_string();
+                        Some(Ident::new(&ident, literal.span()))
                     } else {
                         None
                     }
@@ -249,15 +249,13 @@ fn generate_extend_functions(fields: &[Field]) -> Vec<quote::__private::TokenStr
                             ..,
                         ) = segment.arguments.clone()
                         {
-                            args.into_iter()
-                                .find_map(|arg| {
-                                    if let GenericArgument::Type(Type::Path { path, .. }) = arg {
-                                        Some(path.clone())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap()
+                            args.into_iter().find_map(|arg| {
+                                if let GenericArgument::Type(Type::Path(path)) = arg {
+                                    Some(path)
+                                } else {
+                                    None
+                                }
+                            })
                         } else {
                             None
                         }
@@ -272,14 +270,19 @@ fn generate_extend_functions(fields: &[Field]) -> Vec<quote::__private::TokenStr
         if field_ident != desired_ident {
             functions.push(quote!(
                 pub fn #field_ident(&mut self, value: #ty) -> &mut Self {
-                    self.#field_ident = value;
+                    self.#field_ident = Some(value);
                     self
                 }
             ))
         }
 
         functions.push(quote!(
-            pub fn #desired_ident(&mut self, value: )
+            pub fn #desired_ident(&mut self, value: #inner_ty) -> &mut Self {
+                let mut list = self.#field_ident.unwrap_or(Vec::new());
+                list.push(value);
+                self.#field_ident = Some(list);
+                self
+            }
         ))
     }
     functions
