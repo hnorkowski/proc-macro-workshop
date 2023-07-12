@@ -1,8 +1,9 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, AngleBracketedGenericArguments, Attribute, DeriveInput, Field,
-    GenericArgument, Ident, Meta, MetaList, Path, PathArguments, PathSegment, Type, TypePath,
+    parse_macro_input, spanned::Spanned, AngleBracketedGenericArguments, Attribute, DeriveInput,
+    Error, Field, GenericArgument, Ident, Meta, MetaList, Path, PathArguments, PathSegment, Result,
+    Type, TypePath,
 };
 
 #[proc_macro_derive(Builder, attributes(builder))]
@@ -49,15 +50,20 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let optional_functions = generate_optional_functions(&optional_fields);
     let extend_functions = generate_extend_functions(&extend_fields);
 
+    let extend_functions = match extend_functions {
+        Ok(functions) => functions,
+        Err(error) => return error.into_compile_error().into(),
+    };
+
     let generated = quote!(
         pub struct #builder_ident {
-            #(#builder_fields),*
+            #(#builder_fields,)*
         }
 
         impl #struct_ident {
             pub fn builder() -> #builder_ident {
                 #builder_ident {
-                    #(#field_idents :None),*
+                    #(#field_idents: None,)*
                 }
             }
         }
@@ -73,9 +79,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 })*
 
                 std::result::Result::Ok(#struct_ident {
-                    #(#required_field_idents: self.#required_field_idents.clone().unwrap()),*,
-                    #(#extend_field_idents: self.#extend_field_idents.clone().unwrap_or(Vec::new())),*,
-                    #(#optional_field_idents: self.#optional_field_idents.clone().unwrap_or(None)),*
+                    #(#required_field_idents: self.#required_field_idents.clone().unwrap(),)*
+                    #(#extend_field_idents: self.#extend_field_idents.clone().unwrap_or(Vec::new()),)*
+                    #(#optional_field_idents: self.#optional_field_idents.clone().unwrap_or(None),)*
                 })
             }
         }
@@ -189,7 +195,7 @@ fn generate_optional_functions(fields: &[Field]) -> Vec<quote::__private::TokenS
         .collect()
 }
 
-fn generate_extend_functions(fields: &[Field]) -> Vec<quote::__private::TokenStream> {
+fn generate_extend_functions(fields: &[Field]) -> Result<Vec<quote::__private::TokenStream>> {
     let mut functions = Vec::new();
 
     for field in fields {
@@ -215,7 +221,6 @@ fn generate_extend_functions(fields: &[Field]) -> Vec<quote::__private::TokenStr
                 }
             })
             .expect("All fields must have the attribute");
-        eprintln!("{attribute:#?}");
 
         let field_ident = field.ident.clone().expect("Only named Structs");
 
@@ -224,14 +229,23 @@ fn generate_extend_functions(fields: &[Field]) -> Vec<quote::__private::TokenStr
                 .clone()
                 .into_iter()
                 .find_map(|token| {
+                    if let proc_macro2::TokenTree::Ident(ident) = &token {
+                        if ident != "each" {
+                            eprintln!("Attr: {:#?}", attribute);
+                            return Some(Err(Error::new_spanned(
+                                attribute.meta.clone(),
+                                "expected `builder(each = \"...\")`",
+                            )));
+                        }
+                    }
                     if let proc_macro2::TokenTree::Literal(literal) = token {
                         let ident = literal.to_string().trim_matches('\"').to_string();
-                        Some(Ident::new(&ident, literal.span()))
+                        Some(syn::Result::Ok(Ident::new(&ident, ident.span())))
                     } else {
                         None
                     }
                 })
-                .expect("The attribute must always have an Ident")
+                .expect("The attribute must always have an Ident")?
         } else {
             unreachable!("The attribute must always have a meta list");
         };
@@ -273,17 +287,16 @@ fn generate_extend_functions(fields: &[Field]) -> Vec<quote::__private::TokenStr
                     self.#field_ident = Some(value);
                     self
                 }
-            ))
+            ));
         }
 
         functions.push(quote!(
             pub fn #desired_ident(&mut self, value: #inner_ty) -> &mut Self {
-                let mut list = self.#field_ident.unwrap_or(Vec::new());
+                let list = self.#field_ident.get_or_insert(Vec::new());
                 list.push(value);
-                self.#field_ident = Some(list);
                 self
             }
-        ))
+        ));
     }
-    functions
+    Ok(functions)
 }
