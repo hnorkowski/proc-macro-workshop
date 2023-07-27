@@ -168,6 +168,7 @@ fn generate_extend_functions(fields: &[Field]) -> Result<Vec<quote::__private::T
             }
         ));
     }
+
     Ok(functions)
 }
 

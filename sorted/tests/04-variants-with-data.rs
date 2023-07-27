@@ -4,11 +4,11 @@
 
 use sorted::sorted;
 
-use std::env::VarError;
-use std::error::Error as StdError;
-use std::fmt;
-use std::io;
-use std::str::Utf8Error;
+// use std::env::VarError;
+// use std::error::Error as StdError;
+// use std::fmt;
+// use std::io;
+// use std::str::Utf8Error;
 
 #[sorted]
 pub enum Error {
