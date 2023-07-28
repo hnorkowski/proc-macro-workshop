@@ -1,17 +1,19 @@
-use proc_macro::TokenStream;
-use proc_macro_error::{abort, abort_call_site, proc_macro_error};
+use proc_macro2::TokenStream;
 use syn::{parse_macro_input, Item, ItemEnum, ItemFn, PatTupleStruct, Stmt, __private::ToTokens};
 
 #[proc_macro_attribute]
-#[proc_macro_error]
-pub fn sorted(args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn sorted(
+    args: proc_macro::TokenStream,
+    mut input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     let input2 = input.clone();
     let ast = parse_macro_input!(input2 as syn::Item);
 
     let _ = args;
 
     if let Err(err) = is_sorted(ast) {
-        return err.into_compile_error().into();
+        let token_stream: proc_macro::TokenStream = err.into_compile_error().into();
+        input.extend(token_stream);
     }
 
     input
@@ -21,7 +23,10 @@ fn is_sorted(ast: Item) -> syn::Result<()> {
     let enum2: ItemEnum = if let Item::Enum(enum2) = ast {
         enum2
     } else {
-        abort_call_site!("expected enum or match expression");
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "expected enum or match expression",
+        ));
     };
 
     let variants = enum2.variants;
@@ -30,15 +35,20 @@ fn is_sorted(ast: Item) -> syn::Result<()> {
         return Ok(());
     }
 
-    let prev_variant = variants.first().unwrap();
+    let mut prev_variants = Vec::with_capacity(variants.len());
+    prev_variants.push(variants.first().unwrap().ident.to_string());
     for variant in variants.iter().skip(1) {
-        if prev_variant.ident > variant.ident {
-            abort!(
-                variant.ident,
-                "{} should sort before {}",
-                variant.ident,
-                prev_variant.ident
-            );
+        let current_variant = variant.ident.to_string();
+
+        if prev_variants.first().unwrap() > &current_variant {
+            let expected_position = prev_variants.binary_search(&current_variant).unwrap_err();
+            return Err(syn::Error::new_spanned(
+                variant.ident.to_token_stream(),
+                format!(
+                    "{} should sort before {}",
+                    current_variant, prev_variants[expected_position]
+                ),
+            ));
         }
     }
 
@@ -46,8 +56,10 @@ fn is_sorted(ast: Item) -> syn::Result<()> {
 }
 
 #[proc_macro_attribute]
-#[proc_macro_error]
-pub fn check(args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn check(
+    args: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     let _ = args;
 
     let ast = parse_macro_input!(input as ItemFn);
@@ -55,7 +67,7 @@ pub fn check(args: TokenStream, input: TokenStream) -> TokenStream {
     check_impl(ast).into()
 }
 
-fn check_impl(mut ast: ItemFn) -> proc_macro2::TokenStream {
+fn check_impl(mut ast: ItemFn) -> TokenStream {
     let statements = &mut ast.block.stmts;
     let mut error = None;
 
@@ -178,11 +190,11 @@ impl ToString for syn::Pat {
 }
 
 trait GetFullIdentTokenStream {
-    fn get_full_ident(&self) -> proc_macro2::TokenStream;
+    fn get_full_ident(&self) -> TokenStream;
 }
 
 impl GetFullIdentTokenStream for syn::Pat {
-    fn get_full_ident(&self) -> proc_macro2::TokenStream {
+    fn get_full_ident(&self) -> TokenStream {
         match self {
             syn::Pat::TupleStruct(PatTupleStruct { path, .. }) => path.to_token_stream(),
             other => other.to_token_stream(),
